@@ -1,0 +1,78 @@
+name: Build APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for android/ directory
+        id: check_android
+        run: |
+          if [ ! -d "android" ]; then
+            echo "android directory not found. Please run the 'Bootstrap Platforms' workflow first."
+            echo "skip_build=true" >> $GITHUB_ENV
+          else
+            echo "skip_build=false" >> $GITHUB_ENV
+          fi
+
+      - name: Set up Java
+        if: env.skip_build == 'false'
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter
+        if: env.skip_build == 'false'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Setup Keystore and Key Properties
+        if: env.skip_build == 'false'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            mkdir -p android/app
+            echo $ANDROID_KEYSTORE_BASE64 | base64 --decode > android/app/upload-keystore.jks
+            
+            cat << EOF > android/key.properties
+            storePassword=$ANDROID_KEYSTORE_PASSWORD
+            keyPassword=$ANDROID_KEY_PASSWORD
+            keyAlias=$ANDROID_KEY_ALIAS
+            storeFile=upload-keystore.jks
+            EOF
+          else
+            echo "ANDROID_KEYSTORE_BASE64 not set, proceeding without key properties..."
+          fi
+
+      - name: Fetch dependencies
+        if: env.skip_build == 'false'
+        run: flutter pub get
+
+      - name: Build APK
+        if: env.skip_build == 'false'
+        run: >
+          flutter build apk --release
+          --dart-define=SUPABASE_URL="${{ secrets.SUPABASE_URL }}"
+          --dart-define=SUPABASE_ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}"
+
+      - name: Upload APK Artifact
+        if: env.skip_build == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: peach-pay-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 14
